@@ -1,82 +1,46 @@
-# Tetris Challenge - AIS3 2026 Pre-Exam Writeup
-
-## Challenge Overview
+# Tetris Challenge - WRITEUP
 
 **Category:** Reverse Engineering  
-**Difficulty:** Medium-Hard  
+**Difficulty:** Medium  
 **Flag:** `AIS3{T3tr1s_P4tt3rn_M4st3r!}`
 
-## Description
+## Challenge Description
 
-A Tetris game binary that hides a secret flag. Players must discover the correct pattern to arrange blocks in order to reveal the flag.
+A Tetris game binary with heavy obfuscation. Players must find the secret pattern to reveal the flag.
 
-## Initial Analysis
+## Obfuscation Techniques Used
 
-### File Information
-```bash
-$ file tetris
-tetris: ELF 64-bit LSB executable, x86-64, version 1 (SYSV), statically linked, stripped
-```
+1. **100,000 Junk Functions** - Massive number of dummy functions to confuse disassemblers
+2. **100,000-Entry Jump Table** - Control flow flattening with huge indirect jump table
+3. **Rogue Bytes Macros** - Anti-disassembly techniques (disabled in final build)
+4. **Junk Code Blocks** - Meaningless code interleaved with real logic
 
-The binary is:
-- 64-bit ELF executable
-- **Statically linked** - all libraries embedded (makes it ~1.9MB)
-- **Stripped** - no debug symbols
-- Has renamed/obfuscated sections
+## Solution
 
-### Anti-Analysis Techniques
+### Step 1: Initial Analysis
 
-The binary employs multiple protection mechanisms:
+Load the binary in a disassembler (IDA/Ghidra/Binary Ninja). You'll notice:
+- Huge binary size due to junk functions
+- A large jump table array
+- Encrypted data that looks like a flag
 
-1. **Anti-Disassembler Tricks:**
-   - Fake CALL instructions (`0xe8` opcode in dead code)
-   - Overlapping instructions
-   - Fake RIP-relative addressing
-   - Jump-to-middle-of-instruction patterns
+### Step 2: Find the Encrypted Flag
 
-2. **Anti-Debug Checks:**
-   - `ptrace(PTRACE_TRACEME)` - prevents debugger attachment
-   - `/proc/self/status` TracerPid check
-   - Timing checks - detects if execution is too slow
-   - SIGTRAP handler
+Search for byte sequences or string references. The encrypted flag is stored as:
 
-3. **Control Flow Flattening:**
-   - 256-entry jump table
-   - State machine-based execution
-   - Many junk/trap states
-
-## Reverse Engineering Process
-
-### Step 1: Bypass Anti-Debug
-
-When analyzing with a debugger, the binary detects debugging and corrupts the flag decryption. We can either:
-- Patch out anti-debug checks
-- Use static analysis only
-- Emulate with tools like Unicorn
-
-### Step 2: Identify the Encryption
-
-Looking for crypto-related code, we find:
-
-1. **Encrypted flag data** at a fixed location:
 ```c
 unsigned char encFlag[] = {
     0x2e, 0xa5, 0x56, 0x46, 0x0d, 0x7c, 0x8e, 0xdc,
     0x83, 0x6f, 0x30, 0x83, 0xff, 0xf8, 0xa5, 0x5c,
     0xd0, 0x76, 0xd8, 0xcd, 0x99, 0xdc, 0x3f, 0x39,
-    0x9d, 0x65, 0x70, 0x64, 0x0
+    0x9d, 0x65, 0x70, 0x64
 };
 ```
 
-2. **RC4-like decryption function** (recognizable by the 256-byte S-box, KSA, and PRGA)
+### Step 3: Identify the Winning Pattern
 
-3. **Key derivation** using FNV-1a hash variant
+Look for a 4x10 integer array that represents the winning Tetris pattern:
 
-### Step 3: Find the Winning Pattern
-
-The key insight is that the decryption key is derived from a specific "winning pattern" - a 4x10 grid of colored blocks that must be created in the game.
-
-By analyzing the pattern comparison in `state_pattern_compare`, we find:
 ```c
 const int WINNING_PATTERN[4][BOARD_WIDTH] = {
     {5, 0, 5, 0, 1, 0, 4, 4, 4, 0},
@@ -86,112 +50,79 @@ const int WINNING_PATTERN[4][BOARD_WIDTH] = {
 };
 ```
 
-Where colors are: 1=Cyan, 2=Yellow, 3=Magenta, 4=Green, 5=Red, 6=Blue, 7=White
-
-This pattern visually represents "AIS3" spelled with Tetris blocks!
-
-### Step 4: Key Derivation Algorithm
-
-The key is derived using:
-1. FNV-1a hash initialization: `0x811c9dc5`
-2. For each cell in pattern: `hash = (hash ^ cell) * 0x01000193`
-3. Linear Congruential Generator to expand to 24 bytes
-
-```python
-def derive_key_from_pattern(pattern):
-    hash_val = 0x811c9dc5
-    for i in range(4):
-        for j in range(10):
-            hash_val ^= pattern[i][j]
-            hash_val = (hash_val * 0x01000193) & 0xFFFFFFFF
-    
-    key = []
-    for i in range(24):
-        key.append((hash_val >> ((i % 4) * 8)) & 0xFF)
-        hash_val = (hash_val * 1103515245 + 12345) & 0x7FFFFFFF
-    return bytes(key)
+Visual representation (where numbers represent Tetromino types):
+```
+M   I  LLL
+MMM I  L
+M   I   LL
+M   I  LL T
 ```
 
-### Step 5: RC4 Decryption
+### Step 4: Understand the Decryption
 
-Standard RC4 implementation - since RC4 is symmetric, encryption = decryption:
+The flag decryption uses two algorithms:
 
-```python
-def rc4_decrypt(data, key):
-    S = list(range(256))
-    j = 0
-    for i in range(256):
-        j = (j + S[i] + key[i % len(key)]) % 256
-        S[i], S[j] = S[j], S[i]
-    
-    i = j = 0
-    result = []
-    for byte in data:
-        i = (i + 1) % 256
-        j = (j + S[i]) % 256
-        S[i], S[j] = S[j], S[i]
-        result.append(byte ^ S[(S[i] + S[j]) % 256])
-    return bytes(result)
-```
+1. **Key Derivation (FNV-1a + LCG):**
+   ```c
+   // FNV-1a hash of pattern
+   unsigned int hash = 0x811c9dc5;
+   for each cell in pattern:
+       hash ^= cell
+       hash *= 0x01000193
+   
+   // Generate 24-byte key using LCG
+   for i in 0..23:
+       key[i] = (hash >> ((i % 4) * 8)) & 0xFF
+       hash = (hash * 1103515245 + 12345) & 0x7FFFFFFF
+   ```
 
-## Solution
+2. **RC4 Decryption:**
+   - Standard RC4 algorithm
+   - Key length: 24 bytes
+   - Symmetric (encrypt = decrypt)
 
-Running our solve script:
+### Step 5: Decrypt the Flag
+
+Run the solver script:
 
 ```bash
-$ python3 solve.py
-============================================================
-  Tetris Challenge Solver - AIS3 2026 Pre-Exam
-============================================================
-
-[*] Winning Pattern Visualization:
-╔════════════════════╗
-║██  ██  ██  ██████  ║
-║██████  ██  ██      ║
-║██  ██  ██    ████  ║
-║██  ██  ██  ████  ██║
-╚════════════════════╝
-
-[*] Deriving encryption key from pattern...
-[+] Derived key (24 bytes):
-    6331e236bf039b33dbccc331b738250653b2e011af672927
-
-[*] Decrypting flag...
-
-============================================================
-[+] FLAG: AIS3{T3tr1s_P4tt3rn_M4st3r!}
-============================================================
+python3 solve.py
 ```
 
-## Alternative Solution: Playing the Game
+Or implement manually:
 
-If you manage to arrange the Tetris blocks to match the winning pattern (the first 4 rows should spell "AIS3" using colored blocks), pressing 'P' in the game will verify the pattern and display the flag.
+```python
+# FNV-1a hash of pattern
+hash_val = 0x811c9dc5
+for row in WINNING_PATTERN:
+    for cell in row:
+        hash_val ^= cell
+        hash_val = (hash_val * 0x01000193) & 0xFFFFFFFF
 
-However, this is nearly impossible due to:
-1. Random piece generation
-2. The specific color requirements
-3. Anti-debug checks that interfere
+# Generate key
+key = bytearray(24)
+for i in range(24):
+    key[i] = (hash_val >> ((i % 4) * 8)) & 0xFF
+    hash_val = (hash_val * 1103515245 + 12345) & 0x7FFFFFFF
+
+# RC4 decrypt
+flag = rc4_decrypt(ENC_FLAG, key)
+print(flag)  # AIS3{T3tr1s_P4tt3rn_M4st3r!}
+```
+
+## Alternative Solution: Play the Game
+
+You can also solve this by actually playing Tetris and creating the winning pattern on the bottom 4 rows of the board! Press 'P' to check your pattern.
 
 ## Key Takeaways
 
-1. **Static analysis** is essential when anti-debug is present
-2. **Pattern recognition**: Look for crypto primitives (FNV, RC4 S-box patterns)
-3. **Control flow flattening** can be reversed by tracing state transitions
-4. **Anti-disassembler tricks** often have dead code that can be identified
-5. **The flag format hint**: The pattern spells "AIS3" - a clever design!
-
-## Tools Used
-
-- Ghidra / IDA Pro - for disassembly and decompilation
-- Python - for key derivation and decryption
-- Binary Ninja / radare2 - alternative analysis
+1. Don't be intimidated by large binaries - focus on finding the important parts
+2. Look for constants (magic numbers like FNV-1a's 0x811c9dc5)
+3. Identify encryption algorithms by their structure (RC4's KSA/PRGA pattern)
+4. Pattern matching can help identify winning conditions
 
 ## Files
 
-- `tetris` - Challenge binary (statically linked, ~1.9MB)
+- `tetris` - Challenge binary
 - `solve.py` - Solution script
-- `README.md` - Challenge description for players
-
----
-
-**Flag:** `AIS3{T3tr1s_P4tt3rn_M4st3r!}`
+- `gen_flag.cpp` - Flag generator (not distributed)
