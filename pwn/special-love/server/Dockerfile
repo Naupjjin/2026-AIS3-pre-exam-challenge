@@ -1,4 +1,4 @@
-FROM ubuntu:22.04
+FROM ubuntu:25.04
 
 RUN apt-get update && \
     DEBAIN_FRONTEND=noninteractive apt-get install -qy gcc gcc-multilib xinetd

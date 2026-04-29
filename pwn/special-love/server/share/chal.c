@@ -23,6 +23,6 @@ int main(){
     uint64_t value = 0;
     scanf("%p %zx", &target, &value);
     *target = value;
-    printf("wrote %lx @ %p\n", value, target);
+    printf("write %lx -> %p\n", value, target);
     _exit(0);
 }
