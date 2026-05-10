@@ -1,7 +1,7 @@
 # Tetris Challenge - AIS3 Pre-Exam 2026
 
 CXX = g++
-CXXFLAGS = -fno-stack-protector -no-pie
+CXXFLAGS = -fno-stack-protector -no-pie --static
 STRIP = strip
 
 TARGET = tetris
